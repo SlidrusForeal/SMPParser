@@ -262,7 +262,8 @@ def save_cache(cache: Dict[str, Dict]) -> None:
 
 def validate_player_data(data: Dict) -> bool:
     required_fields = ['status_main', 'stats']
-    return all(field in data for field in required_fields)
+    return any(field in data and data[field] is not None for field in required_fields)
+
 
 
 async def process_players(
