@@ -12,6 +12,9 @@ from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from collections import defaultdict
 from tqdm.asyncio import tqdm_asyncio
+from functools import lru_cache
+import pickle
+import htmlmin
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -30,10 +33,11 @@ logger = logging.getLogger(__name__)
 # Глобальные константы
 CACHE_FILE = 'player_data.json'
 HTML_REPORT = 'players_report.html'
-MAX_CONCURRENT_REQUESTS = 5
+MAX_CONCURRENT_REQUESTS = 15
 RETRY_ATTEMPTS = 3
 
-
+def minify_html(html_content: str) -> str:
+    return htmlmin.minify(html_content, remove_empty_space=True, remove_comments=True)
 class Statistics:
     """
     Класс для сбора статистики выполнения программы.
@@ -74,7 +78,7 @@ class Statistics:
 
 stats = Statistics()
 
-
+@lru_cache(maxsize=128)
 def clean_html_tags(text: str) -> str:
     """
     Удаляет HTML-теги и лишние пробелы из текста.
@@ -148,7 +152,7 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[Any]]:
     """
     Парсит HTML-страницу профиля игрока и возвращает словарь с данными.
     """
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, 'lxml')
     profile_data: Dict[str, Optional[Any]] = {}
 
     try:
@@ -236,28 +240,19 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[Any]]:
 
     return profile_data
 
-
-def load_cache() -> Dict[str, Dict]:
-    """
-    Загружает кэшированные данные из файла JSON.
-    """
+def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as file:
-                return orjson.loads(file)
+            with open(CACHE_FILE, 'rb') as file:
+                return pickle.load(file)
         except Exception as e:
             logger.error(f"Ошибка при загрузке кэша: {e}")
-            return {}
     return {}
 
-
-def save_cache(cache: Dict[str, Dict]) -> None:
-    """
-    Сохраняет кэшированные данные в файл JSON.
-    """
+def save_cache(cache):
     try:
-        with open(CACHE_FILE, 'w', encoding='utf-8') as file:
-            orjson.dumps(cache, file, ensure_ascii=False, indent=4)
+        with open(CACHE_FILE, 'wb') as file:
+            pickle.dump(cache, file)
     except Exception as e:
         logger.error(f"Ошибка при сохранении кэша: {e}")
 
@@ -589,6 +584,7 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
     </html>
     """
 
+    html_content = minify_html(html_content)
     try:
         with open(HTML_REPORT, 'w', encoding='utf-8') as f:
             f.write(html_content)
