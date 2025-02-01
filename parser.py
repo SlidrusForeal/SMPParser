@@ -240,7 +240,7 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[Any]]:
 
     return profile_data
 
-def load_cache():
+def load_cache() -> Dict[str, Dict]:
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'rb') as file:
@@ -249,7 +249,7 @@ def load_cache():
             logger.error(f"Ошибка при загрузке кэша: {e}")
     return {}
 
-def save_cache(cache):
+def save_cache(cache: Dict[str, Dict]) -> None:
     try:
         with open(CACHE_FILE, 'wb') as file:
             pickle.dump(cache, file)
