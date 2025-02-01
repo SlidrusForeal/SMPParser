@@ -7,7 +7,7 @@ import os
 from typing import Optional, Dict, List, Any
 import argparse
 import re
-import json
+import orjson
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from collections import defaultdict
@@ -244,7 +244,7 @@ def load_cache() -> Dict[str, Dict]:
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as file:
-                return json.load(file)
+                return orjson.loads(file)
         except Exception as e:
             logger.error(f"Ошибка при загрузке кэша: {e}")
             return {}
@@ -257,7 +257,7 @@ def save_cache(cache: Dict[str, Dict]) -> None:
     """
     try:
         with open(CACHE_FILE, 'w', encoding='utf-8') as file:
-            json.dump(cache, file, ensure_ascii=False, indent=4)
+            orjson.dumps(cache, file, ensure_ascii=False, indent=4)
     except Exception as e:
         logger.error(f"Ошибка при сохранении кэша: {e}")
 
@@ -267,7 +267,7 @@ def validate_player_data(data: Dict) -> bool:
     Проверяет наличие обязательных полей в данных игрока.
     """
     required_fields = ['status_main', 'stats']
-    return all(field in data and data[field] is not None for field in required_fields)
+    return any(field in data and data[field] is not None for field in required_fields)
 
 
 async def process_player(
