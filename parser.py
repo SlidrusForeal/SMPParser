@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import logging
 from dotenv import load_dotenv
 import os
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Any
 import argparse
 import re
 import json
@@ -13,9 +13,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from collections import defaultdict
 from tqdm.asyncio import tqdm_asyncio
 
-
+# Загрузка переменных окружения
 load_dotenv()
 
+# Настройка логирования: вывод в консоль и файл
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -26,30 +27,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Глобальные константы
 CACHE_FILE = 'player_data.json'
 HTML_REPORT = 'players_report.html'
 MAX_CONCURRENT_REQUESTS = 5
 RETRY_ATTEMPTS = 3
 
 
-class AsyncProgressBar:
-    def __init__(self, total: int, desc: str = "Обработка"):
-        self.pbar = tqdm_asyncio(
-            total=total,
-            desc=desc,
-            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
-            ascii=True,
-            colour='GREEN'
-        )
-
-    async def update(self, n: int = 1):
-        self.pbar.update(n)
-
-    async def close(self):
-        self.pbar.close()
-
 class Statistics:
-    def __init__(self):
+    """
+    Класс для сбора статистики выполнения программы.
+    """
+    def __init__(self) -> None:
         self.start_time = datetime.now()
         self.players_processed = 0
         self.requests_made = 0
@@ -57,16 +46,16 @@ class Statistics:
         self.failures = defaultdict(int)
         self.success = 0
 
-    def log_request(self):
+    def log_request(self) -> None:
         self.requests_made += 1
 
-    def log_retry(self):
+    def log_retry(self) -> None:
         self.retries += 1
 
-    def log_failure(self, error_type: str):
+    def log_failure(self, error_type: str) -> None:
         self.failures[error_type] += 1
 
-    def log_success(self):
+    def log_success(self) -> None:
         self.success += 1
 
     def get_report(self) -> str:
@@ -87,6 +76,9 @@ stats = Statistics()
 
 
 def clean_html_tags(text: str) -> str:
+    """
+    Удаляет HTML-теги и лишние пробелы из текста.
+    """
     if not text:
         return ""
     text = re.sub(r'<span class="material-symbols-rounded">.*?</span>', '', text)
@@ -103,6 +95,9 @@ def clean_html_tags(text: str) -> str:
     before_sleep=lambda _: stats.log_retry(),
 )
 async def login(session: aiohttp.ClientSession, username: str, password: str) -> bool:
+    """
+    Выполняет авторизацию на сервере.
+    """
     login_url = 'https://serverchichi.online/account/auth'
     login_data = {'username': username, 'password': password}
 
@@ -124,7 +119,10 @@ async def login(session: aiohttp.ClientSession, username: str, password: str) ->
     retry=retry_if_exception_type(aiohttp.ClientError),
     before_sleep=lambda _: stats.log_retry(),
 )
-async def fetch_players(session: aiohttp.ClientSession, offset: int) -> Optional[List[Dict]]:
+async def fetch_players(session: aiohttp.ClientSession, offset: int) -> Optional[List[Dict[str, Any]]]:
+    """
+    Получает список игроков по смещению (offset).
+    """
     search_url = 'https://serverchichi.online/players/search'
     data = {
         'nickname': '',
@@ -146,23 +144,22 @@ async def fetch_players(session: aiohttp.ClientSession, offset: int) -> Optional
         raise
 
 
-async def parse_player_profile(html_content: str) -> Dict[str, Optional[str]]:
+async def parse_player_profile(html_content: str) -> Dict[str, Optional[Any]]:
+    """
+    Парсит HTML-страницу профиля игрока и возвращает словарь с данными.
+    """
     soup = BeautifulSoup(html_content, 'html.parser')
-    profile_data = {}
+    profile_data: Dict[str, Optional[Any]] = {}
 
     try:
-        # Проверка статуса онлайн/оффлайн через <div class="playerOnline active"></div>
+        # Определение статуса онлайн/оффлайн
         player_online = soup.find('div', class_='playerOnline')
-        if player_online and 'active' in player_online.get('class', []):
-            profile_data['status'] = 'онлайн'
-        else:
-            profile_data['status'] = 'оффлайн'
+        profile_data['status'] = 'онлайн' if player_online and 'active' in player_online.get('class', []) else 'оффлайн'
     except Exception as e:
         logger.error(f"Ошибка при парсинге статуса онлайн/оффлайн: {e}")
         profile_data['status'] = None
 
     try:
-        # Статус игрока (текстовый статус, например, "мегастатус")
         status_main = soup.find('p', class_='status-main')
         profile_data['status_main'] = status_main.get_text(strip=True) if status_main else None
     except Exception as e:
@@ -170,18 +167,13 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[str]]:
         profile_data['status_main'] = None
 
     try:
-        # Информация о покупке "СЧ+ 2 уровня"
         player_plus_content = soup.find('div', class_='player-plus-content')
-        if player_plus_content:
-            profile_data['player_plus'] = player_plus_content.find('p').get_text(strip=True)
-        else:
-            profile_data['player_plus'] = None
+        profile_data['player_plus'] = player_plus_content.find('p').get_text(strip=True) if player_plus_content else None
     except Exception as e:
         logger.error(f"Ошибка при парсинге player-plus-content: {e}")
         profile_data['player_plus'] = None
 
     try:
-        # Социальные сети
         socials = soup.find('div', class_='socials')
         if socials:
             profile_data['socials'] = []
@@ -199,7 +191,6 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[str]]:
         profile_data['socials'] = None
 
     try:
-        # Статистика
         stats_div = soup.find('div', class_='stats')
         if stats_div:
             stats_p_tags = stats_div.find_all('p')
@@ -211,7 +202,6 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[str]]:
         profile_data['stats'] = None
 
     try:
-        # РП-карточки
         rp_container = soup.find('div', class_='rp-container')
         if rp_container:
             rp_cards = []
@@ -230,7 +220,6 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[str]]:
         profile_data['rp_cards'] = None
 
     try:
-        # Роли
         roles_div = soup.find('div', class_='roles')
         if roles_div:
             roles = []
@@ -249,45 +238,47 @@ async def parse_player_profile(html_content: str) -> Dict[str, Optional[str]]:
 
 
 def load_cache() -> Dict[str, Dict]:
+    """
+    Загружает кэшированные данные из файла JSON.
+    """
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, 'r', encoding='utf-8') as file:
-            return json.load(file)
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as file:
+                return json.load(file)
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке кэша: {e}")
+            return {}
     return {}
 
 
 def save_cache(cache: Dict[str, Dict]) -> None:
-    with open(CACHE_FILE, 'w', encoding='utf-8') as file:
-        json.dump(cache, file, ensure_ascii=False, indent=4)
+    """
+    Сохраняет кэшированные данные в файл JSON.
+    """
+    try:
+        with open(CACHE_FILE, 'w', encoding='utf-8') as file:
+            json.dump(cache, file, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении кэша: {e}")
 
 
 def validate_player_data(data: Dict) -> bool:
+    """
+    Проверяет наличие обязательных полей в данных игрока.
+    """
     required_fields = ['status_main', 'stats']
-    return any(field in data and data[field] is not None for field in required_fields)
+    return all(field in data and data[field] is not None for field in required_fields)
 
-
-
-async def process_players(
-        session: aiohttp.ClientSession,
-        players: List[Dict],
-        cache: Dict[str, Dict],
-        semaphore: asyncio.Semaphore,
-        progress_bar: Optional[AsyncProgressBar] = None
-) -> None:
-    tasks = []
-    for player in players:
-        task = asyncio.create_task(
-            process_player(session, player['minecraft_nickname'], cache, semaphore)
-        )
-        if progress_bar:
-            task.add_done_callback(lambda _: asyncio.create_task(progress_bar.update(1)))
-        tasks.append(task)
 
 async def process_player(
-        session: aiohttp.ClientSession,
-        player_nickname: str,
-        cache: Dict[str, Dict],
-        semaphore: asyncio.Semaphore
+    session: aiohttp.ClientSession,
+    player_nickname: str,
+    cache: Dict[str, Dict],
+    semaphore: asyncio.Semaphore
 ) -> Optional[Dict]:
+    """
+    Обрабатывает профиль одного игрока: использует кэш или загружает и парсит HTML-страницу.
+    """
     async with semaphore:
         stats.players_processed += 1
         logger.debug(f"Обработка игрока: {player_nickname}")
@@ -307,6 +298,7 @@ async def process_player(
                 html = await response.text()
                 profile_data = await parse_player_profile(html)
 
+                # Дополнительный поиск ссылки на Telegram
                 profile_soup = BeautifulSoup(html, 'html.parser')
                 telegram_link = profile_soup.find('a', class_='social telegram')
                 profile_data['telegram'] = telegram_link['href'] if telegram_link else None
@@ -325,7 +317,119 @@ async def process_player(
             return None
 
 
-def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]):
+def build_player_card(nickname: str, data: Dict, previous_cache: Dict[str, Dict]) -> str:
+    """
+    Формирует HTML-разметку для карточки игрока.
+    """
+    prev_data = previous_cache.get(nickname, {})
+    changes = []
+
+    card_classes: List[str] = []
+    if nickname not in previous_cache:
+        card_classes.append('new')
+    else:
+        for key in ['status_main', 'stats', 'roles', 'player_plus']:
+            if data.get(key) != prev_data.get(key):
+                changes.append(key)
+                card_classes.append('changed')
+                break
+
+    # Формирование HTML для социальных сетей
+    socials_html = ""
+    if data.get('socials'):
+        socials_html = "<ul class='socials-list'>"
+        for social in data['socials']:
+            socials_html += (
+                f"<li class='social-item'>"
+                f"<span>▪ {social['name']}</span>"
+                f"<a href='{social['url']}' target='_blank'>{social['url']}</a>"
+                f"</li>"
+            )
+        socials_html += "</ul>"
+    else:
+        socials_html = "N/A"
+
+    # Формирование HTML для статистики
+    stats_html = ""
+    if data.get('stats'):
+        stats_html = "<ul class='stats-list'>"
+        for stat in data['stats']:
+            stats_html += f"<li>▪ {stat}</li>"
+        stats_html += "</ul>"
+    else:
+        stats_html = "N/A"
+
+    # Формирование HTML для РП-карточек
+    rp_cards_html = ""
+    if data.get('rp_cards'):
+        rp_cards_html = "<div class='rp-cards-container'>"
+        for card in data['rp_cards']:
+            rp_cards_html += (
+                f"<div class='rp-card'>"
+                f"<h3>{card['h3']}</h3>"
+                f"<p>{card['p']}</p>"
+                f"</div>"
+            )
+        rp_cards_html += "</div>"
+    else:
+        rp_cards_html = "N/A"
+
+    # Формирование HTML для ролей
+    roles_html = ""
+    if data.get('roles'):
+        roles_html = "<ul class='roles-list'>"
+        for role in data['roles']:
+            roles_html += f"<li>▪ {role}</li>"
+        roles_html += "</ul>"
+    else:
+        roles_html = "N/A"
+
+    # Формирование HTML для СЧ+
+    player_plus_html = f"<div class='player-plus'><p>{data['player_plus']}</p></div>" if data.get('player_plus') else "N/A"
+
+    player_card = f"""
+    <div class="player-card {' '.join(card_classes)}">
+        <div class="player-header" onclick="toggleContent(this)">
+            <h2>
+                <a href="https://serverchichi.online/player/{nickname}" 
+                   target="_blank" 
+                   style="color: inherit; text-decoration: none;">
+                    {nickname}
+                </a>
+            </h2>
+            <span class="status-main">{data.get('status', 'N/A')}</span>
+        </div>
+        <div class="player-content">
+            <div class="section">
+                <h3 class="section-title">Социальные сети</h3>
+                {socials_html}
+            </div>
+            <div class="section">
+                <h3 class="section-title">Статистика</h3>
+                {stats_html}
+            </div>
+            <div class="section">
+                <h3 class="section-title">РП-карточки</h3>
+                {rp_cards_html}
+            </div>
+            <div class="section">
+                <h3 class="section-title">Роли</h3>
+                {roles_html}
+            </div>
+            <div class="section">
+                <h3 class="section-title">СЧ+</h3>
+                {player_plus_html}
+            </div>
+        </div>
+    </div>
+    """
+    return player_card
+
+
+def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]) -> None:
+    """
+    Генерирует HTML-отчёт по игрокам и сохраняет его в файл.
+    """
     css_style = """
     <style>
         .report-container {
@@ -335,7 +439,6 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
             padding: 20px;
             background: #f5f5f5;
         }
-
         .player-card {
             background: white;
             border-radius: 10px;
@@ -343,7 +446,6 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
             overflow: hidden;
         }
-
         .player-header {
             padding: 15px 20px;
             background: #2c3e50;
@@ -353,56 +455,47 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
             justify-content: space-between;
             align-items: center;
         }
-
         .player-content {
             padding: 0 20px;
             max-height: 0;
             overflow: hidden;
             transition: max-height 0.3s ease-out;
         }
-
         .player-card.active .player-content {
             max-height: 2000px;
             padding: 20px;
         }
-
         .section-title {
             color: #3498db;
             margin: 15px 0 10px;
             border-bottom: 2px solid #3498db;
             padding-bottom: 5px;
         }
-
         .socials-list, .stats-list, .roles-list {
             list-style-type: none;
             padding-left: 20px;
         }
-
         .social-item {
             margin: 5px 0;
             display: flex;
             align-items: center;
         }
-
         .social-item a {
             color: #2980b9;
             text-decoration: none;
             margin-left: 10px;
         }
-
         .rp-card {
             background: #f8f9fa;
             padding: 10px;
             margin: 10px 0;
             border-radius: 5px;
         }
-
         .timestamp {
             text-align: center;
             color: #7f8c8d;
             margin: 20px 0;
         }
-
         .changed {
             background-color: #fff3cd;
             border-left: 3px solid #ffc107;
@@ -442,20 +535,17 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
         function toggleContent(element) {
             element.parentElement.classList.toggle('active');
         }
-
         function toggleAll() {
             document.querySelectorAll('.player-card').forEach(card => {
                 card.classList.toggle('active');
             });
         }
-
         function filterByStatus(status) {
             document.querySelectorAll('.player-card').forEach(card => {
                 const statusElem = card.querySelector('.player-header span');
                 card.style.display = statusElem?.textContent.toLowerCase().includes(status) ? '' : 'none';
             });
         }
-
         function searchPlayers() {
             const input = document.getElementById('search');
             const filter = input.value.toUpperCase();
@@ -487,102 +577,10 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
             <div class="timestamp">Сгенерировано: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
     """
 
+    # Формирование карточек для каждого игрока
     for nickname, data in cache.items():
-        prev_data = previous_cache.get(nickname, {})
-        changes = []
-
-        card_classes = []
-        if nickname not in previous_cache:
-            card_classes.append('new')
-        else:
-            for key in ['status_main', 'stats', 'roles', 'player_plus']:
-                if data.get(key) != prev_data.get(key):
-                    changes.append(key)
-                    card_classes.append('changed')
-                    break
-
-        socials = ""
-        if data.get('socials'):
-            socials = "<ul class='socials-list'>"
-            for social in data['socials']:
-                socials += f"""
-                <li class='social-item'>
-                    <span>▪ {social['name']}</span>
-                    <a href="{social['url']}" target="_blank">{social['url']}</a>
-                </li>
-                """
-            socials += "</ul>"
-
-        stats_html = ""
-        if data.get('stats'):
-            stats_html = "<ul class='stats-list'>"
-            for stat in data['stats']:
-                stats_html += f"<li>▪ {stat}</li>"
-            stats_html += "</ul>"
-
-        rp_cards = ""
-        if data.get('rp_cards'):
-            rp_cards = "<div class='rp-cards-container'>"
-            for card in data['rp_cards']:
-                rp_cards += f"""
-                <div class='rp-card'>
-                    <h3>{card['h3']}</h3>
-                    <p>{card['p']}</p>
-                </div>
-                """
-            rp_cards += "</div>"
-
-        roles = ""
-        if data.get('roles'):
-            roles = "<ul class='roles-list'>"
-            for role in data['roles']:
-                roles += f"<li>▪ {role}</li>"
-            roles += "</ul>"
-
-        player_plus = ""
-        if data.get('player_plus'):
-            player_plus = f"<div class='player-plus'><p>{data['player_plus']}</p></div>"
-
-        html_content += f"""
-        <div class="player-card {' '.join(card_classes)}">
-            <div class="player-header" onclick="toggleContent(this)">
-                <h2>
-                    <a href="https://serverchichi.online/player/{nickname}" 
-                       target="_blank" 
-                       style="color: inherit; text-decoration: none;">
-                        {nickname}
-                    </a>
-                </h2>
-                <span class="status-main">{data.get('status', 'N/A')}</span>
-            </div>
-            <div class="player-content">
-                <div class="section">
-                    <h3 class="section-title">Социальные сети</h3>
-                    {socials if socials else "N/A"}
-                </div>
-
-                <div class="section">
-                    <h3 class="section-title">Статистика</h3>
-                    {stats_html if stats_html else "N/A"}
-                </div>
-
-                <div class="section">
-                    <h3 class="section-title">РП-карточки</h3>
-                    {rp_cards if rp_cards else "N/A"}
-                </div>
-
-                <div class="section">
-                    <h3 class="section-title">Роли</h3>
-                    {roles if roles else "N/A"}
-                </div>
-
-                <div class="section">
-                    <h3 class="section-title">СЧ+</h3>
-                    {player_plus if player_plus else "N/A"}
-                </div>
-            </div>
-        </div>
-        """
+        player_card = build_player_card(nickname, data, previous_cache)
+        html_content += player_card
 
     html_content += f"""
         </div>
@@ -591,49 +589,62 @@ def generate_html_report(cache: Dict[str, Dict], previous_cache: Dict[str, Dict]
     </html>
     """
 
-    with open(HTML_REPORT, 'w', encoding='utf-8') as f:
-        f.write(html_content)
-    logger.info(f"HTML-отчет сохранен в файл {HTML_REPORT}")
+    try:
+        with open(HTML_REPORT, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        logger.info(f"HTML-отчет сохранен в файл {HTML_REPORT}")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении HTML-отчета: {e}")
 
 
 async def main(username: str, password: str, max_offset: int = 500) -> None:
+    """
+    Основная асинхронная функция: авторизация, сбор и обработка данных игроков, генерация отчёта.
+    """
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     previous_cache = load_cache()
     current_cache = previous_cache.copy()
 
-    async with aiohttp.ClientSession() as session:
+    # Использование TCPConnector для ограничения одновременных подключений
+    connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_REQUESTS)
+    async with aiohttp.ClientSession(connector=connector) as session:
         if not await login(session, username, password):
+            logger.error("Авторизация не удалась.")
             return
 
-        # Получаем реальное количество игроков
-        total_players = 0
+        # Получаем всех игроков по offset
+        all_players: List[Dict[str, Any]] = []
         offset = 0
-        all_players = []
         while offset <= max_offset:
-            players = await fetch_players(session, offset)
+            try:
+                players = await fetch_players(session, offset)
+            except Exception as e:
+                logger.error(f"Остановка запроса игроков на offset {offset}: {e}")
+                break
             if not players:
                 break
             all_players.extend(players)
             offset += 50
 
         total_players = len(all_players)
-        progress_bar = tqdm_asyncio(total=total_players, desc="Сбор данных игроков", colour='GREEN')
+        logger.info(f"Найдено игроков: {total_players}")
 
-        # Обрабатываем игроков с реальным прогрессом
+        # Создаем задачи для обработки профилей игроков с визуализацией прогресса
         tasks = []
+        progress_bar = tqdm_asyncio(total=total_players, desc="Сбор данных игроков", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]", colour='GREEN')
         for player in all_players:
-            task = asyncio.create_task(
-                process_player(session, player['minecraft_nickname'], current_cache, semaphore)
-            )
-            task.add_done_callback(lambda _: progress_bar.update(1))
-            tasks.append(task)
-
+            nickname = player.get('minecraft_nickname')
+            if nickname:
+                task = asyncio.create_task(process_player(session, nickname, current_cache, semaphore))
+                task.add_done_callback(lambda _: progress_bar.update(1))
+                tasks.append(task)
         await asyncio.gather(*tasks)
         progress_bar.close()
 
     save_cache(current_cache)
     generate_html_report(current_cache, previous_cache)
     logger.info(stats.get_report())
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Поиск данных игроков.")
