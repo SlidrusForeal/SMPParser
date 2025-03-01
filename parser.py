@@ -102,7 +102,7 @@ async def login(session: aiohttp.ClientSession, username: str, password: str) ->
     """
     Выполняет авторизацию на сервере.
     """
-    login_url = 'https://serverchichi.online/account/auth'
+    login_url = 'ЛОГИН В САЙТ'
     login_data = {'username': username, 'password': password}
 
     try:
@@ -127,7 +127,7 @@ async def fetch_players(session: aiohttp.ClientSession, offset: int) -> Optional
     """
     Получает список игроков по смещению (offset).
     """
-    search_url = 'https://serverchichi.online/players/search'
+    search_url = 'ССЫЛКА НА ГЛАНВУЮ СТРАНИЦУ С ИГРОКАМИ'
     data = {
         'nickname': '',
         'sort': '',
